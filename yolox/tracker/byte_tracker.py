@@ -10,18 +10,30 @@ from .kalman_filter import KalmanFilter
 from yolox.tracker import matching
 from .basetrack import BaseTrack, TrackState
 
+MAX_FEATURE_PER_PERSON = os.getenv("MAX_FEATURE_PER_PERSON")
+if MAX_FEATURE_PER_PERSON is None:
+    print("Can't get MAX_FEATURE_PER_PERSON from env")
+    print("Set MAX_FEATURE_PER_PERSON = 5")
+    MAX_FEATURE_PER_PERSON = 5
+
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
-    def __init__(self, tlwh, score):
+    def __init__(self, cam_id, ltwh, score):
 
         # wait activate
-        self._tlwh = np.asarray(tlwh, dtype=float)
+        self._ltwh = np.asarray(ltwh, dtype=float)
         self.kalman_filter = None
         self.mean, self.covariance = None, None
         self.is_activated = False
 
         self.score = score
         self.tracklet_len = 0
+        self.cam_id = cam_id
+        self.frame_ids = []
+        self.boxes = []
+        self.features = []
+        self.box_sizes = []
+
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -31,6 +43,14 @@ class STrack(BaseTrack):
 
     @staticmethod
     def multi_predict(stracks):
+        """
+        Perform multi-prediction for the given set of stracks.
+
+        Parameters:
+        - stracks: a list of stracks
+
+        Return: None
+        """
         if len(stracks) > 0:
             multi_mean = np.asarray([st.mean.copy() for st in stracks])
             multi_covariance = np.asarray([st.covariance for st in stracks])
@@ -46,7 +66,7 @@ class STrack(BaseTrack):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
-        self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
+        self.mean, self.covariance = self.kalman_filter.initiate(self.ltwh_to_xyah(self._ltwh))
 
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -55,10 +75,11 @@ class STrack(BaseTrack):
         # self.is_activated = True
         self.frame_id = frame_id
         self.start_frame = frame_id
+        self.frame_ids.append(self.start_frame)
 
     def re_activate(self, new_track, frame_id, new_id=False):
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
+            self.mean, self.covariance, self.ltwh_to_xyah(new_track.ltwh)
         )
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -79,22 +100,41 @@ class STrack(BaseTrack):
         self.frame_id = frame_id
         self.tracklet_len += 1
 
-        new_tlwh = new_track.tlwh
+        new_ltwh = new_track.ltwh
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+            self.mean, self.covariance, self.ltwh_to_xyah(new_ltwh))
         self.state = TrackState.Tracked
         self.is_activated = True
 
         self.score = new_track.score
+        self.frame_ids.append(self.frame_id)
+
+    def add_feature(self, box, feature):
+        if len(self.boxes) < MAX_FEATURE_PER_PERSON:
+            self.boxes.append(box)
+            self.features.append(feature)
+            self.box_sizes.append(box[2] * box[3])
+        else:
+            min_box_size = 100000
+            min_box_size_idx = -1
+            for i in range(1, MAX_FEATURE_PER_PERSON - 1):
+                if self.box_sizes[i] < min_box_size:
+                    min_box_size = self.box_sizes[i]
+                    min_box_size_idx = i
+            current_box_size = box[2] * box[3]
+            if current_box_size > min_box_size:
+                self.box_sizes[min_box_size_idx] = current_box_size
+                self.boxes[min_box_size_idx] = box
+                self.features[min_box_size_idx] = feature
 
     @property
     # @jit(nopython=True)
-    def tlwh(self):
+    def ltwh(self):
         """Get current position in bounding box format `(top left x, top left y,
                 width, height)`.
         """
         if self.mean is None:
-            return self._tlwh.copy()
+            return self._ltwh.copy()
         ret = self.mean[:4].copy()
         ret[2] *= ret[3]
         ret[:2] -= ret[2:] / 2
@@ -106,44 +146,44 @@ class STrack(BaseTrack):
         """Convert bounding box to format `(min x, min y, max x, max y)`, i.e.,
         `(top left, bottom right)`.
         """
-        ret = self.tlwh.copy()
+        ret = self.ltwh.copy()
         ret[2:] += ret[:2]
         return ret
 
     @staticmethod
     # @jit(nopython=True)
-    def tlwh_to_xyah(tlwh):
+    def ltwh_to_xyah(ltwh):
         """Convert bounding box to format `(center x, center y, aspect ratio,
         height)`, where the aspect ratio is `width / height`.
         """
-        ret = np.asarray(tlwh).copy()
+        ret = np.asarray(ltwh).copy()
         ret[:2] += ret[2:] / 2
         ret[2] /= ret[3]
         return ret
 
     def to_xyah(self):
-        return self.tlwh_to_xyah(self.tlwh)
+        return self.ltwh_to_xyah(self.ltwh)
 
     @staticmethod
     # @jit(nopython=True)
-    def tlbr_to_tlwh(tlbr):
+    def tlbr_to_ltwh(tlbr):
         ret = np.asarray(tlbr).copy()
         ret[2:] -= ret[:2]
         return ret
 
     @staticmethod
     # @jit(nopython=True)
-    def tlwh_to_tlbr(tlwh):
-        ret = np.asarray(tlwh).copy()
+    def ltwh_to_tlbr(ltwh):
+        ret = np.asarray(ltwh).copy()
         ret[2:] += ret[:2]
         return ret
 
     def __repr__(self):
-        return 'OT_{}_({}-{})'.format(self.track_id, self.start_frame, self.end_frame)
+        return 'OT_{}_{}_({}-{})'.format(self.cam_id, self.track_id, self.start_frame, self.end_frame)
 
 
 class BYTETracker(object):
-    def __init__(self, args, frame_rate=30):
+    def __init__(self, args, cam_id=0, frame_rate=30):
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
         self.removed_stracks = []  # type: list[STrack]
@@ -154,6 +194,7 @@ class BYTETracker(object):
         self.det_thresh = args.track_thresh + 0.1
         self.buffer_size = int(frame_rate / 30.0 * args.track_buffer)
         self.max_time_lost = self.buffer_size
+        self.cam_id = cam_id
         self.kalman_filter = KalmanFilter()
 
     def update(self, output_results, img_info, img_size):
@@ -186,7 +227,7 @@ class BYTETracker(object):
 
         if len(dets) > 0:
             '''Detections'''
-            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
+            detections = [STrack(cam_id=self.cam_id, ltwh=STrack.tlbr_to_ltwh(tlbr), score=s) for
                           (tlbr, s) in zip(dets, scores_keep)]
         else:
             detections = []
@@ -223,7 +264,7 @@ class BYTETracker(object):
         # association the untrack to the low score detections
         if len(dets_second) > 0:
             '''Detections'''
-            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
+            detections_second = [STrack(self.cam_id, STrack.tlbr_to_ltwh(tlbr), s) for
                           (tlbr, s) in zip(dets_second, scores_second)]
         else:
             detections_second = []

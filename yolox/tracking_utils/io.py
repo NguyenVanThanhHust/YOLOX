@@ -21,10 +21,10 @@ def write_results(filename, results_dict: Dict, data_type: str):
         for frame_id, frame_data in results_dict.items():
             if data_type == 'kitti':
                 frame_id -= 1
-            for tlwh, track_id in frame_data:
+            for ltwh, track_id in frame_data:
                 if track_id < 0:
                     continue
-                x1, y1, w, h = tlwh
+                x1, y1, w, h = ltwh
                 x2, y2 = x1 + w, y1 + h
                 line = save_format.format(frame=frame_id, id=track_id, x1=x1, y1=y1, x2=x2, y2=y2, w=w, h=h, score=1.0)
                 f.write(line)
@@ -98,19 +98,19 @@ def read_mot_results(filename, is_gt, is_ignore):
                 #if box_size < 15000:
                     #continue
 
-                tlwh = tuple(map(float, linelist[2:6]))
+                ltwh = tuple(map(float, linelist[2:6]))
                 target_id = int(linelist[1])
 
-                results_dict[fid].append((tlwh, target_id, score))
+                results_dict[fid].append((ltwh, target_id, score))
 
     return results_dict
 
 
 def unzip_objs(objs):
     if len(objs) > 0:
-        tlwhs, ids, scores = zip(*objs)
+        ltwhs, ids, scores = zip(*objs)
     else:
-        tlwhs, ids, scores = [], [], []
-    tlwhs = np.asarray(tlwhs, dtype=float).reshape(-1, 4)
+        ltwhs, ids, scores = [], [], []
+    ltwhs = np.asarray(ltwhs, dtype=float).reshape(-1, 4)
 
-    return tlwhs, ids, scores
+    return ltwhs, ids, scores
