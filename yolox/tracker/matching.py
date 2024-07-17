@@ -103,8 +103,8 @@ def v_iou_distance(atracks, btracks):
         atlbrs = atracks
         btlbrs = btracks
     else:
-        atlbrs = [track.ltwh_to_tlbr(track.pred_bbox) for track in atracks]
-        btlbrs = [track.ltwh_to_tlbr(track.pred_bbox) for track in btracks]
+        atlbrs = [track.tlwh_to_tlbr(track.pred_bbox) for track in atracks]
+        btlbrs = [track.tlwh_to_tlbr(track.pred_bbox) for track in btracks]
     _ious = ious(atlbrs, btlbrs)
     cost_matrix = 1 - _ious
 
